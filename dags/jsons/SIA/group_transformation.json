@@ -1,0 +1,60 @@
+{
+    "AP_CONDIC": {
+        "EP": "Em processamento",
+        "PG": "Pago"
+    },
+    "AP_SEXO": {
+        "F": "Feminino",
+        "M": "Masculino",
+        "I": "Ignorado"
+    },
+    "AP_RACACOR": {
+        "01": "Branca",
+        "02": "Preta",
+        "03": "Amarela",
+        "04": "Parda",
+        "05": "Indígena",
+        "99": "Ignorado"
+    },
+    "RACA_COR": {
+        "01": "Branca",
+        "02": "Preta",
+        "03": "Amarela",
+        "04": "Parda",
+        "05": "Indígena",
+        "99": "Ignorado"
+    },
+    "AP_UFDIF": {
+        "0": "Mesmo UF do estabelecimento",
+        "1": "UF diferente do estabelecimento"
+    },
+    "AP_MNDIF": {
+        "0": "Mesmo municipio",
+        "1": "Municipio diferente"
+    },
+    "AP_TPAPAC": {
+        "1": "Inicial",
+        "2": "Continuidade",
+        "3": "Unica"
+    },
+    "AP_OBITO": {
+        "0": "Não",
+        "1": "Sim"
+    },
+    "AP_ENCERR": {
+        "0": "Não",
+        "1": "Sim"
+    },
+    "AP_PERMAN": {
+        "0": "Não",
+        "1": "Sim"
+    },
+    "AP_ALTA": {
+        "0": "Não",
+        "1": "Sim"
+    },
+    "AP_TRANSF": {
+        "0": "Não",
+        "1": "Sim"
+    }
+}

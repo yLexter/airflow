@@ -7,8 +7,12 @@ import boto3
 import pandas as pd
 import os
 import re
+import shutil
+import itertools
+import uuid
+import json
 
-sigla = ['ACF']
+siglas = ['ACF']
 anos = [2021]
 estados = ['PB']
 meses = [f"{i:02}" for i in range(1, 13)]
@@ -18,8 +22,12 @@ class BaseDag:
 
     pattern = r'(?P<sigla>[A-Z]{2,3})(?P<estado>[A-Z]{2})(?P<ano>\d{2})(?P<mes>\d{2}).parquet'
 
+    json_drop_columns = 'dags/jsons/SIA/drop_columns.json'
+    json_group_transformation = 'dags/jsons/SIA/group_transformation.json'
+    json_rename_columns = 'dags/jsons/SIA/rename_columns.json'
+
     bucket_bronze = 'bronze'
-    folder_cache_files = 'cache'
+    base_folder_cache = 'dags/cache'
     minio_client = boto3.client(
            's3',
             endpoint_url='http://10.100.100.61:9000',
@@ -27,6 +35,18 @@ class BaseDag:
             aws_secret_access_key='minioadmin',
             region_name='us-east-1',
     )
+
+
+    def read_json(path):
+        json = None
+
+        with open(path, 'r') as f:
+            json = json.load(f)
+
+        return json
+
+    def get_folder_cache(self):
+        return str(uuid.uuid4())[:14]
 
     def list_folders_minio(self, path):
         folders = set()
@@ -41,7 +61,7 @@ class BaseDag:
             if continuation_token:
                 list_params["ContinuationToken"] = continuation_token
 
-            response = s3_client.list_objects_v2(**list_params)
+            response = self.minio_client.list_objects_v2(**list_params)
 
             if "Contents" in response:
                 for obj in response["Contents"]:
@@ -80,26 +100,59 @@ class BaseDag:
         files = self.create_filenames()
 
         filtred_parquets = self.filter_paths(all_parquets, files)
-
-        for parquet in filtred_parquets:
+        
+        for path_parquet_minio in filtred_parquets[:1]:
             
-            folder_parquet = re.search(self.pattern, parquet)
-            path_parquet = os.path.join(self.folder_cache_files, folder_parquet)
+            folder_parquet = re.search(self.pattern, path_parquet_minio).group()
+            path_parquet_cache = os.path.join(self.folder_cache_files, folder_parquet)
 
-            if not os.path.exists(path_parquet):
-                os.mkdir(path_parquet)
+            if not os.path.exists(path_parquet_cache):
+                os.mkdir(path_parquet_cache)
+            else:
+                shutil.rmtree(path_parquet_cache)
+                os.mkdir(path_parquet_cache)
             
-            response = self.minio_client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
+            response = self.minio_client.list_objects_v2(Bucket=self.bucket_bronze, Prefix= path_parquet_minio )
 
             if 'Contents' in response:
                 for obj in response['Contents']:
                     key = obj['Key']
                     file_name = os.path.basename(key)
 
-                    file_path = os.path.join(path_parquet, file_name)
+                    file_path = os.path.join(path_parquet_cache, file_name)
                     
-                    self.minio_client.download_file(Bucket=self.bucket_name, Key=key, Filename=file_path)
+                    self.minio_client.download_file(Bucket=self.bucket_bronze, Key=key, Filename=file_path)
+    
+    def drop_columns(self, parquet_path):
+        
+        with open(self.json_file, 'r') as f:
+            drop_columns = json.load(f)
 
+        df = pd.read_parquet(parquet_path)
+        df = df.drop(columns=drop_columns, errors='ignore')
+
+        df.to_parquet(parquet_path)
+
+
+    def rename_columns(self, parquet_path):
+        json_columns = self.read_json(self.json_drop_columns)
+
+        df = pd.read_parquet(parquet_path)
+        df = df.rename(columns=json_columns)
+
+        df.to_parquet(parquet_path)
+
+    
+    def group_transformation(self, parquet_path):
+        json_columns_mapping = self.read_json(parquet_path)
+
+        df = pd.read_parquet(parquet_path)
+
+        for column_name, mappings in json_columns_mapping.items():
+            if column_name in df.columns:
+                df[column_name] = df[column_name].map(mappings).fillna(df[column_name])
+
+        df.to_parquet(parquet_path, index=False)
 
 with DAG(
     dag_id="latest_only_with_trigger",

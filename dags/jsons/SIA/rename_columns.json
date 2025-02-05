@@ -1,0 +1,12 @@
+{
+    "AP_CONDIC": "Condicao de pagamento",
+    "AP_CMP": "Data de atendimento",
+    "AP_MVM": "Data de processamento",
+    "AP_CODUNI": "Codigo CNES",
+    "AP_SEXO": "Sexo",
+    "AP_RACACOR": "Raça/Cor",
+    "AP_OBITO": "Obito",
+    "AP_ENCERR": "Encerramento do tratamento",
+    "AP_TRANSF": "Transferencia",
+    "AP_MUNPCN": "Cidade do paciente"
+}
