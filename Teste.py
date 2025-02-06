@@ -1,22 +1,20 @@
 import datetime
 import pendulum
 
-from airflow.models.dag import DAG
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 import boto3
 import pandas as pd
 import os
 import re
-import shutil
 import itertools
 import uuid
 import json
+import shutil
 
-siglas = ['ACF']
-anos = [2021]
+siglas = ['PS', 'ATD', 'AM']
+anos = [2023, 2024]
 estados = ['PB']
 meses = [f"{i:02}" for i in range(1, 13)]
-path_parquets = ''
+path_parquets = 'sia-parquet/sia-pb-2023-2024'
 
 class BaseDag:
 
@@ -27,7 +25,7 @@ class BaseDag:
     json_rename_columns = 'dags/jsons/SIA/rename_columns.json'
 
     bucket_bronze = 'bronze'
-    folder_cache = 'dags/cache'
+    base_folder_cache = 'dags/cache'
     minio_client = boto3.client(
            's3',
             endpoint_url='http://10.100.100.61:9000',
@@ -97,11 +95,13 @@ class BaseDag:
     def download_parquet(self):
         all_parquets = self.list_folders_minio(path_parquets)
         files = self.create_filenames()
+
         filtred_parquets = self.filter_paths(all_parquets, files)
         
-        for path_parquet_minio in filtred_parquets:
-            parquet_name = re.search(self.pattern, path_parquet_minio).group()
-            path_parquet_cache = os.path.join(self.folder_cache, parquet_name)
+        for path_parquet_minio in filtred_parquets[:1]:
+            
+            folder_parquet = re.search(self.pattern, path_parquet_minio).group()
+            path_parquet_cache = os.path.join(self.folder_cache_files, folder_parquet)
 
             if not os.path.exists(path_parquet_cache):
                 os.mkdir(path_parquet_cache)
@@ -115,52 +115,38 @@ class BaseDag:
                 for obj in response['Contents']:
                     key = obj['Key']
                     file_name = os.path.basename(key)
+
                     file_path = os.path.join(path_parquet_cache, file_name)
                     
                     self.minio_client.download_file(Bucket=self.bucket_bronze, Key=key, Filename=file_path)
     
-    def apply_function_parquet(self, parquet_dir, callback):
-        for root, _, files in os.walk(parquet_dir):
-            for file in files:
-                parquet_file_path = os.path.join(root, file)
-
-                if file.endswith('.parquet'):
-                    df = pd.read_parquet(parquet_file_path)
-
-                    new_df = callback(df)            
-                    new_df.to_parquet(parquet_file_path)
-
     def drop_columns(self, parquet_path):
         
         drop_columns_json = self.read_json(self.json_drop_columns)
 
-        def callback(df):
-            return df.drop(columns=drop_columns_json, errors='ignore')
+        df = pd.read_parquet(parquet_path)
+        df = df.drop(columns=drop_columns_json, errors='ignore')
 
-        self.apply_function_parquet(parquet_path, callback)
+        df.to_parquet(parquet_path, mode='w')
 
     def rename_columns(self, parquet_path):
         json_columns = self.read_json(self.json_rename_columns)
 
-        def callback(df):
-            return df.rename(columns=json_columns)
+        df = pd.read_parquet(parquet_path)
+        df = df.rename(columns=json_columns)
 
-        self.apply_function_parquet(parquet_path, callback)
-
+        df.to_parquet(parquet_path, mode='w')
+    
     def group_transformation(self, parquet_path):
         json_columns_mapping = self.read_json(self.json_group_transformation)
-        
-        def callback(df):
-            for column_name, mappings in json_columns_mapping.items():
-                if column_name in df.columns:
-                    df[column_name] = df[column_name].astype(str).str.strip()
-                    mappings = {k.strip(): v for k, v in mappings.items()}
-                    
-                    df[column_name] = df[column_name].map(mappings).fillna(df[column_name])
-             
-            return df
-        
-        self.apply_function_parquet(parquet_path, callback)
+
+        df = pd.read_parquet(parquet_path)
+
+        for column_name, mappings in json_columns_mapping.items():
+            if column_name in df.columns:
+                df[column_name] = df[column_name].map(mappings).fillna(df[column_name])
+
+        df.to_parquet(parquet_path, mode='w', index=False)
 
     def upload_to_silver(self, parquet_path):
 
@@ -169,33 +155,27 @@ class BaseDag:
             return
         
         for root, _, files in os.walk(parquet_path):
-            parquet = os.path.basename(root)
-            match = re.match(self.pattern, parquet)
+
+            parquet_dir = os.path.basename(root)
+
+            match = re.match(self.pattern, parquet_dir)
 
             sigla = match.group('sigla')
             estado = match.group('estado')
             ano = match.group('ano')
             mes = match.group('mes')
 
-            if not match:
-                raise Exception(f'Arquivo {parquet} com nome inválido')
-
             for file in files:
                 if file.endswith('.parquet'):
                     file_path = os.path.join(root, file)
                     s3_key = f'SIA/{sigla}/{sigla}{estado}{ano}{mes}.parquet/{file}'
 
-                    self.minio_client.upload_file(Filename=file_path, Bucket='silver', Key= s3_key)
+                    self.minio_client.upload_file(Filename=file_path, Bucket='silver', Key=s3_key)
 
-    
+path = 'C:/airflow/dags/cache/AMPB2301.parquet'
+base = BaseDag()
 
-with DAG(
-    dag_id="latest_only_with_trigger",
-    schedule=datetime.timedelta(hours=4),
-    start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
-    catchup=False,
-    tags=["example3"],
-) as dag:
-    pass
-
-  
+base.drop_columns(path)
+base.rename_columns(path)
+base.group_transformation(path)
+base.upload_to_silver(path)
